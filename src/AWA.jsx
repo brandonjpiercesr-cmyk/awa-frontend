@@ -3,8 +3,9 @@
 // ════════════════════════════════════════════════════════════════════════════
 // ARCHITECTURE:
 //   - This file is SKIN. It has NO brain. ZERO hardcoded logic.
-//   - ALL operations route through ABABASE endpoints
-//   - /api/awa/* → AWA Tools → JOBA Agent → LLM → Response
+//   - Jobs CRUD: aba-reach.onrender.com/api/awa/*
+//   - Cover Letters: aba-reach.onrender.com/api/awa/cover-letters (JOBA agent)
+//   - AI Chat: abacia-services.onrender.com/api/air/process (FCW 87 agents)
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -20,100 +21,103 @@ import { onAuthStateChanged } from "firebase/auth";
 import { ABAPresence } from "./ABAPresence.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ABABASE ENDPOINTS — Direct AWA tool calls
+// ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════
-const ABABASE = "https://abacia-services.onrender.com";
+const REACH = "https://aba-reach.onrender.com";  // Jobs, Cover Letters, Resumes
+const ABABASE = "https://abacia-services.onrender.com";  // FCW, AI Chat
 
-async function awaLoadJobs(userId) {
+// ═══════════════════════════════════════════════════════════════════════════
+// API FUNCTIONS - Route to correct endpoint
+// ═══════════════════════════════════════════════════════════════════════════
+async function fetchJobs(assignee = null) {
   try {
-    const res = await fetch(`${ABABASE}/api/awa/jobs?userId=${userId}`);
-    if (!res.ok) throw new Error(`Load failed: ${res.status}`);
-    return await res.json();
+    let url = `${REACH}/api/awa/jobs`;
+    if (assignee) url += `?assignee=${assignee}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data.jobs || [];
   } catch (e) {
-    console.error('[AWA] Load jobs error:', e);
-    return { success: false, jobs: [], error: e.message };
+    console.error("fetchJobs error:", e);
+    return [];
   }
 }
 
-async function awaUpdateJob(jobId, updates, userId) {
+async function updateJob(jobId, updates) {
   try {
-    const res = await fetch(`${ABABASE}/api/awa/jobs/${jobId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...updates, userId })
+    const res = await fetch(`${REACH}/api/awa/jobs/${jobId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error(`Update failed: ${res.status}`);
-    return await res.json();
+    return res.ok;
   } catch (e) {
-    console.error('[AWA] Update job error:', e);
-    return { success: false, error: e.message };
+    console.error("updateJob error:", e);
+    return false;
   }
 }
 
-async function awaGenerateCoverLetter(job, userId) {
+async function generateCoverLetter(userId, jobTitle, organization) {
   try {
-    const res = await fetch(`${ABABASE}/api/awa/cover-letter`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job, userId })
+    const res = await fetch(`${REACH}/api/awa/cover-letters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        user_id: userId, 
+        job_title: jobTitle, 
+        company_name: organization 
+      })
     });
-    if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
     return await res.json();
   } catch (e) {
-    console.error('[AWA] Cover letter error:', e);
-    return { success: false, error: e.message };
+    console.error("generateCoverLetter error:", e);
+    return null;
   }
 }
 
-async function awaGenerateResume(job, userId) {
+async function generateResume(userId, jobTitle, organization) {
   try {
-    const res = await fetch(`${ABABASE}/api/awa/resume`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job, userId })
+    const res = await fetch(`${REACH}/api/awa/resumes/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        user_id: userId, 
+        target_role: jobTitle,
+        company_name: organization 
+      })
     });
-    if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
     return await res.json();
   } catch (e) {
-    console.error('[AWA] Resume error:', e);
-    return { success: false, error: e.message };
+    console.error("generateResume error:", e);
+    return null;
   }
 }
 
-async function awaGenerateInterviewPrep(job, userId) {
+async function chatWithABA(userId, message, jobContext = null) {
   try {
-    const res = await fetch(`${ABABASE}/api/awa/interview-prep`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job, userId })
+    const contextStr = jobContext 
+      ? `[AWA Context: ${jobContext.job_title} at ${jobContext.organization}] ` 
+      : "";
+    const res = await fetch(`${ABABASE}/api/air/process`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: contextStr + message,
+        userId,
+        channel: "awa"
+      })
     });
-    if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
-    return await res.json();
+    const data = await res.json();
+    return data.response || data.message || "No response";
   } catch (e) {
-    console.error('[AWA] Interview prep error:', e);
-    return { success: false, error: e.message };
-  }
-}
-
-async function awaChat(job, message, userId) {
-  try {
-    const res = await fetch(`${ABABASE}/api/awa/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job, message, userId })
-    });
-    if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
-    return await res.json();
-  } catch (e) {
-    console.error('[AWA] Chat error:', e);
-    return { success: false, error: e.message };
+    console.error("chatWithABA error:", e);
+    return "Error connecting to ABA";
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════
-const BG = "https://i.imgur.com/3RkebB2.jpeg"; // pinkSmoke
+const BG = "https://i.imgur.com/3RkebB2.jpeg";
 
 const TEAM = {
   brandon: { name: "Brandon Pierce", initials: "BP", color: "#8B5CF6" },
@@ -157,7 +161,11 @@ function TeamBadge({ id, size = "sm" }) {
 
 function AssigneeBadges({ assignees }) {
   if (!assignees || assignees.length === 0) return null;
-  return <div style={{ display: "flex", gap: 4 }}>{assignees.map(a => <TeamBadge key={a} id={a} size="sm" />)}</div>;
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      {assignees.map(a => <TeamBadge key={a} id={a} size="sm" />)}
+    </div>
+  );
 }
 
 function JobCard({ job, onSelect, selected }) {
@@ -173,12 +181,18 @@ function JobCard({ job, onSelect, selected }) {
             color: "rgba(255,255,255,.9)", fontSize: 14, fontWeight: 600, margin: 0, lineHeight: 1.3,
             overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical"
           }}>{job.job_title}</h3>
+          
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
             <span style={{ color: "rgba(255,255,255,.5)", fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}>
               <Building size={10} />{job.organization}
             </span>
-            {job.salary && <span style={{ color: "rgba(139,92,246,.7)", fontSize: 10, fontWeight: 600 }}>{job.salary}</span>}
+            {job.salary && (
+              <span style={{ color: "rgba(139,92,246,.7)", fontSize: 10, fontWeight: 600 }}>
+                {job.salary}
+              </span>
+            )}
           </div>
+          
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <AssigneeBadges assignees={job.assignees} />
             <span style={{
@@ -187,7 +201,6 @@ function JobCard({ job, onSelect, selected }) {
               color: job.status === "LIVE" ? "#22C55E" : "#6B7280"
             }}>{job.status}</span>
             {job.cover_letter && <FileText size={12} style={{ color: "rgba(139,92,246,.5)" }} />}
-            {job.resume_version && <FileEdit size={12} style={{ color: "rgba(99,102,241,.5)" }} />}
           </div>
         </div>
         <ChevronRight size={16} style={{ color: "rgba(255,255,255,.2)", flexShrink: 0 }} />
@@ -196,97 +209,39 @@ function JobCard({ job, onSelect, selected }) {
   );
 }
 
-function LiveEditor({ content, onChange, onSave, saving, title, onRegenerate, regenerating }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <h3 style={{ color: "white", fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h3>
-        <div style={{ display: "flex", gap: 8 }}>
-          {onRegenerate && (
-            <button onClick={onRegenerate} disabled={regenerating} style={{
-              display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8,
-              background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer",
-              color: "rgba(255,255,255,.6)", fontSize: 12, fontWeight: 600
-            }}>
-              {regenerating ? <RefreshCw size={14} className="spin" /> : <Sparkles size={14} />}
-              {regenerating ? "Regenerating..." : "Regenerate"}
-            </button>
-          )}
-          <button onClick={onSave} disabled={saving} style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8,
-            background: "rgba(139,92,246,.2)", border: "none", cursor: "pointer",
-            color: "#8B5CF6", fontSize: 12, fontWeight: 600
-          }}>
-            {saving ? <RefreshCw size={14} className="spin" /> : <Save size={14} />}
-            {saving ? "Saving..." : "Save"}
-          </button>
-          <button onClick={() => navigator.clipboard.writeText(content)} style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8,
-            background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer",
-            color: "rgba(255,255,255,.6)", fontSize: 12, fontWeight: 600
-          }}>
-            <Copy size={14} />Copy
-          </button>
-        </div>
-      </div>
-      <textarea
-        value={content}
-        onChange={e => onChange(e.target.value)}
-        style={{
-          flex: 1, width: "100%", padding: 16, borderRadius: 12,
-          background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)",
-          color: "rgba(255,255,255,.85)", fontSize: 13, lineHeight: 1.7,
-          resize: "none", outline: "none", fontFamily: "inherit"
-        }}
-      />
-    </div>
-  );
-}
-
 function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }) {
   const [activeTab, setActiveTab] = useState("cover");
   const [coverLetter, setCoverLetter] = useState(job.cover_letter || "");
   const [resume, setResume] = useState(job.resume_version || "");
-  const [interviewPrep, setInterviewPrep] = useState(job.interview_prep || "");
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [generating, setGenerating] = useState(null);
   const [saving, setSaving] = useState(false);
-
-  // Sync when job changes
-  useEffect(() => {
-    setCoverLetter(job.cover_letter || "");
-    setResume(job.resume_version || "");
-    setInterviewPrep(job.interview_prep || "");
-  }, [job.id]);
   
   const handleGenerate = async (type) => {
     setGenerating(type);
     setOrbState("thinking");
     
-    let result;
     if (type === "cover") {
-      result = await awaGenerateCoverLetter(job, userId);
-      if (result.success && result.coverLetter) {
-        setCoverLetter(result.coverLetter);
+      const assigneeId = job.assignees?.[0] || userId;
+      const result = await generateCoverLetter(assigneeId, job.job_title, job.organization);
+      if (result?.content || result?.cover_letter?.content) {
+        const content = result.content || result.cover_letter?.content;
+        setCoverLetter(content);
         setToast({ message: "Cover letter generated!", type: "success" });
+      } else {
+        setToast({ message: "Generation failed", type: "error" });
       }
     } else if (type === "resume") {
-      result = await awaGenerateResume(job, userId);
-      if (result.success && result.resume) {
-        setResume(result.resume);
+      const assigneeId = job.assignees?.[0] || userId;
+      const result = await generateResume(assigneeId, job.job_title, job.organization);
+      if (result?.content || result?.resume?.content) {
+        const content = result.content || result.resume?.content;
+        setResume(content);
         setToast({ message: "Resume generated!", type: "success" });
+      } else {
+        setToast({ message: "Generation failed", type: "error" });
       }
-    } else if (type === "prep") {
-      result = await awaGenerateInterviewPrep(job, userId);
-      if (result.success && result.interviewPrep) {
-        setInterviewPrep(result.interviewPrep);
-        setToast({ message: "Interview prep ready!", type: "success" });
-      }
-    }
-    
-    if (!result?.success) {
-      setToast({ message: result?.error || "Generation failed", type: "error" });
     }
     
     setGenerating(null);
@@ -300,13 +255,14 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
     const updates = {};
     if (type === "cover") updates.cover_letter = content;
     if (type === "resume") updates.resume_version = content;
-    if (type === "prep") updates.interview_prep = content;
     
-    const result = await onUpdate(job.id, updates);
-    if (result?.success) setToast({ message: "Saved!", type: "success" });
-    
+    const success = await onUpdate(job.id, updates);
     setSaving(false);
     setOrbState("idle");
+    
+    if (success) {
+      setToast({ message: "Saved!", type: "success" });
+    }
   };
   
   const handleChat = async () => {
@@ -314,33 +270,29 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
     
     const userMsg = { role: "user", content: chatInput };
     setChatMessages(prev => [...prev, userMsg]);
-    const msg = chatInput;
+    const question = chatInput;
     setChatInput("");
     setOrbState("thinking");
     
-    const result = await awaChat(job, msg, userId);
-    
-    if (result.success && result.response) {
-      setChatMessages(prev => [...prev, { role: "assistant", content: result.response }]);
-    } else {
-      setChatMessages(prev => [...prev, { role: "assistant", content: "Sorry, I encountered an error. Please try again." }]);
-    }
+    const response = await chatWithABA(userId, question, job);
+    setChatMessages(prev => [...prev, { role: "assistant", content: response }]);
     setOrbState("idle");
   };
   
   const TABS = [
     { id: "cover", label: "Cover Letter", icon: FileText },
     { id: "resume", label: "Resume", icon: FileEdit },
-    { id: "prep", label: "Interview Prep", icon: MessageSquare },
-    { id: "chat", label: "Chat", icon: Mic }
+    { id: "chat", label: "Ask ABA", icon: MessageSquare }
   ];
   
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Job Header */}
       <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,.05)" }}>
-        <h2 style={{ color: "white", fontSize: 18, fontWeight: 700, margin: "0 0 4px", lineHeight: 1.3 }}>{job.job_title}</h2>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <h2 style={{ color: "white", fontSize: 18, fontWeight: 700, margin: "0 0 4px", lineHeight: 1.3 }}>
+          {job.job_title}
+        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ color: "rgba(255,255,255,.6)", fontSize: 13 }}>{job.organization}</span>
           <span style={{ color: "rgba(139,92,246,.7)", fontSize: 12, fontWeight: 600 }}>{job.salary}</span>
         </div>
@@ -349,7 +301,9 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
           <a href={job.url} target="_blank" rel="noopener noreferrer" style={{
             display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
             background: "rgba(139,92,246,.15)", color: "#8B5CF6", fontSize: 11, fontWeight: 600, textDecoration: "none"
-          }}><ExternalLink size={12} />View Posting</a>
+          }}>
+            <ExternalLink size={12} />View Posting
+          </a>
         </div>
       </div>
       
@@ -365,7 +319,9 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
               border: "none", cursor: "pointer",
               color: active ? "#8B5CF6" : "rgba(255,255,255,.5)",
               fontSize: 12, fontWeight: 600, flexShrink: 0
-            }}><Icon size={14} />{tab.label}</button>
+            }}>
+              <Icon size={14} />{tab.label}
+            </button>
           );
         })}
       </div>
@@ -377,15 +333,43 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
             {!coverLetter ? (
               <div style={{ textAlign: "center", padding: 40 }}>
                 <FileText size={48} style={{ color: "rgba(139,92,246,.3)", marginBottom: 16 }} />
-                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>Generate a cover letter using JOBA agent with your team profile.</p>
+                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>
+                  Generate a cover letter using JOBA agent and {job.assignees?.[0] || "your"} profile.
+                </p>
                 <button onClick={() => handleGenerate("cover")} disabled={generating === "cover"} style={{
                   display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10,
                   background: "linear-gradient(135deg, rgba(139,92,246,.4), rgba(99,102,241,.3))",
                   border: "none", cursor: "pointer", color: "white", fontSize: 14, fontWeight: 600, margin: "0 auto"
-                }}>{generating === "cover" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Cover Letter</>}</button>
+                }}>
+                  {generating === "cover" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Cover Letter</>}
+                </button>
               </div>
             ) : (
-              <LiveEditor content={coverLetter} onChange={setCoverLetter} onSave={() => handleSave("cover", coverLetter)} saving={saving} title="Cover Letter" onRegenerate={() => handleGenerate("cover")} regenerating={generating === "cover"} />
+              <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <h3 style={{ color: "white", fontSize: 14, fontWeight: 600, margin: 0 }}>Cover Letter</h3>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => navigator.clipboard.writeText(coverLetter)} style={{
+                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
+                      background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 11
+                    }}><Copy size={12} />Copy</button>
+                    <button onClick={() => handleSave("cover", coverLetter)} disabled={saving} style={{
+                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
+                      background: "rgba(139,92,246,.2)", border: "none", cursor: "pointer", color: "#8B5CF6", fontSize: 11, fontWeight: 600
+                    }}>{saving ? "Saving..." : "Save"}</button>
+                  </div>
+                </div>
+                <textarea
+                  value={coverLetter}
+                  onChange={e => setCoverLetter(e.target.value)}
+                  style={{
+                    flex: 1, width: "100%", padding: 16, borderRadius: 12,
+                    background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)",
+                    color: "rgba(255,255,255,.85)", fontSize: 13, lineHeight: 1.7,
+                    resize: "none", outline: "none", fontFamily: "inherit"
+                  }}
+                />
+              </div>
             )}
           </div>
         )}
@@ -395,33 +379,43 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
             {!resume ? (
               <div style={{ textAlign: "center", padding: 40 }}>
                 <FileEdit size={48} style={{ color: "rgba(99,102,241,.3)", marginBottom: 16 }} />
-                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>Generate a tailored resume for this role.</p>
+                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>
+                  Generate a tailored resume for this role.
+                </p>
                 <button onClick={() => handleGenerate("resume")} disabled={generating === "resume"} style={{
                   display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10,
                   background: "linear-gradient(135deg, rgba(99,102,241,.4), rgba(139,92,246,.3))",
                   border: "none", cursor: "pointer", color: "white", fontSize: 14, fontWeight: 600, margin: "0 auto"
-                }}>{generating === "resume" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Resume</>}</button>
+                }}>
+                  {generating === "resume" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Resume</>}
+                </button>
               </div>
             ) : (
-              <LiveEditor content={resume} onChange={setResume} onSave={() => handleSave("resume", resume)} saving={saving} title="Tailored Resume" onRegenerate={() => handleGenerate("resume")} regenerating={generating === "resume"} />
-            )}
-          </div>
-        )}
-        
-        {activeTab === "prep" && (
-          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-            {!interviewPrep ? (
-              <div style={{ textAlign: "center", padding: 40 }}>
-                <MessageSquare size={48} style={{ color: "rgba(245,158,11,.3)", marginBottom: 16 }} />
-                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>Prepare for your interview with AI-generated Q&A.</p>
-                <button onClick={() => handleGenerate("prep")} disabled={generating === "prep"} style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10,
-                  background: "linear-gradient(135deg, rgba(245,158,11,.4), rgba(234,179,8,.3))",
-                  border: "none", cursor: "pointer", color: "white", fontSize: 14, fontWeight: 600, margin: "0 auto"
-                }}>{generating === "prep" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Interview Prep</>}</button>
+              <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <h3 style={{ color: "white", fontSize: 14, fontWeight: 600, margin: 0 }}>Tailored Resume</h3>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => navigator.clipboard.writeText(resume)} style={{
+                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
+                      background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 11
+                    }}><Copy size={12} />Copy</button>
+                    <button onClick={() => handleSave("resume", resume)} disabled={saving} style={{
+                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
+                      background: "rgba(139,92,246,.2)", border: "none", cursor: "pointer", color: "#8B5CF6", fontSize: 11, fontWeight: 600
+                    }}>{saving ? "Saving..." : "Save"}</button>
+                  </div>
+                </div>
+                <textarea
+                  value={resume}
+                  onChange={e => setResume(e.target.value)}
+                  style={{
+                    flex: 1, width: "100%", padding: 16, borderRadius: 12,
+                    background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)",
+                    color: "rgba(255,255,255,.85)", fontSize: 13, lineHeight: 1.7,
+                    resize: "none", outline: "none", fontFamily: "inherit"
+                  }}
+                />
               </div>
-            ) : (
-              <LiveEditor content={interviewPrep} onChange={setInterviewPrep} onSave={() => handleSave("prep", interviewPrep)} saving={saving} title="Interview Prep" onRegenerate={() => handleGenerate("prep")} regenerating={generating === "prep"} />
             )}
           </div>
         )}
@@ -432,7 +426,17 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
               {chatMessages.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 40 }}>
                   <ABAPresence state="idle" size={60} />
-                  <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginTop: 16 }}>Ask ABA anything about this job, organization, or how to prepare.</p>
+                  <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginTop: 16 }}>
+                    Ask ABA anything about this job, organization, or how to prepare.
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 16 }}>
+                    {["What should I emphasize?", "Tell me about this org", "Salary negotiation tips"].map(q => (
+                      <button key={q} onClick={() => { setChatInput(q); }} style={{
+                        padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,.05)",
+                        border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 11
+                      }}>{q}</button>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 chatMessages.map((msg, i) => (
@@ -441,21 +445,33 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
                     background: msg.role === "user" ? "rgba(139,92,246,.15)" : "rgba(255,255,255,.03)",
                     marginLeft: msg.role === "user" ? "20%" : 0,
                     marginRight: msg.role === "assistant" ? "20%" : 0
-                  }}><p style={{ color: "rgba(255,255,255,.8)", fontSize: 13, margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{msg.content}</p></div>
+                  }}>
+                    <p style={{ color: "rgba(255,255,255,.8)", fontSize: 13, margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                      {msg.content}
+                    </p>
+                  </div>
                 ))
               )}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleChat()} placeholder="Ask about this job..." style={{
-                flex: 1, padding: "12px 16px", borderRadius: 12,
-                background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)",
-                color: "white", fontSize: 14, outline: "none"
-              }} />
+              <input
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleChat()}
+                placeholder="Ask about this job..."
+                style={{
+                  flex: 1, padding: "12px 16px", borderRadius: 12,
+                  background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)",
+                  color: "white", fontSize: 14, outline: "none"
+                }}
+              />
               <button onClick={handleChat} style={{
                 padding: "12px 16px", borderRadius: 12,
                 background: "linear-gradient(135deg, rgba(139,92,246,.4), rgba(99,102,241,.3))",
                 border: "none", cursor: "pointer"
-              }}><Send size={18} style={{ color: "white" }} /></button>
+              }}>
+                <Send size={18} style={{ color: "white" }} />
+              </button>
             </div>
           </div>
         )}
@@ -483,7 +499,7 @@ function Login({ onLogin }) {
         <div style={{ marginBottom: 24 }}><ABAPresence state="idle" size={100} /></div>
         <h1 style={{ color: "white", fontSize: 28, fontWeight: 700, margin: "0 0 6px", background: "linear-gradient(135deg, #8B5CF6, #6366F1, #EC4899)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>AWA</h1>
         <p style={{ color: "rgba(255,255,255,.6)", fontSize: 14, margin: "0 0 8px" }}>Apply With ABA</p>
-        <p style={{ color: "rgba(255,255,255,.4)", fontSize: 12, margin: "0 0 32px" }}>143 Jobs • Cover Letters • Resumes • Interview Prep</p>
+        <p style={{ color: "rgba(255,255,255,.4)", fontSize: 12, margin: "0 0 32px" }}>143 Jobs • Cover Letters • Resumes • AI Chat</p>
         <button onClick={go} disabled={loading} style={{ width: "100%", padding: "16px 24px", borderRadius: 16, border: "1px solid rgba(255,255,255,.1)", cursor: loading ? "wait" : "pointer", background: "linear-gradient(135deg, rgba(139,92,246,.3), rgba(99,102,241,.25))", color: "white", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 12, boxShadow: "0 4px 20px rgba(139,92,246,.2)" }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
           {loading ? "Signing in..." : "Sign in with Google"}
@@ -523,32 +539,34 @@ export default function AWA() {
   }, [user]);
 
   useEffect(() => { const unsub = onAuthStateChanged(auth, u => { setUser(u); setAuthLoading(false); }); return () => unsub(); }, []);
+  
   useEffect(() => { if (user) loadJobs(); }, [user]);
 
   const loadJobs = async () => {
     setLoading(true);
     setOrbState("thinking");
-    const result = await awaLoadJobs(userId);
-    if (result.success) setJobs(result.jobs);
-    else setToast({ message: result.error || "Failed to load jobs", type: "error" });
+    const data = await fetchJobs();
+    setJobs(data);
     setLoading(false);
     setOrbState("idle");
   };
 
   const handleUpdate = async (jobId, updates) => {
     setOrbState("thinking");
-    const result = await awaUpdateJob(jobId, updates, userId);
-    if (result.success) {
+    const success = await updateJob(jobId, updates);
+    if (success) {
       setJobs(prev => prev.map(j => j.id === jobId ? { ...j, ...updates } : j));
       setSelectedJob(prev => prev?.id === jobId ? { ...prev, ...updates } : prev);
     }
     setOrbState("idle");
-    return result;
+    return success;
   };
 
   const filtered = useMemo(() => {
     return jobs.filter(j => {
-      const matchSearch = !search || j.job_title?.toLowerCase().includes(search.toLowerCase()) || j.organization?.toLowerCase().includes(search.toLowerCase());
+      const matchSearch = !search || 
+        j.job_title?.toLowerCase().includes(search.toLowerCase()) || 
+        j.organization?.toLowerCase().includes(search.toLowerCase());
       const matchAssignee = assigneeFilter === "all" || j.assignees?.includes(assigneeFilter);
       return matchSearch && matchAssignee;
     });
@@ -556,7 +574,11 @@ export default function AWA() {
 
   const assigneeCounts = useMemo(() => {
     const counts = { all: jobs.length };
-    jobs.forEach(j => j.assignees?.forEach(a => { counts[a] = (counts[a] || 0) + 1; }));
+    jobs.forEach(j => {
+      j.assignees?.forEach(a => {
+        counts[a] = (counts[a] || 0) + 1;
+      });
+    });
     return counts;
   }, [jobs]);
 
@@ -567,26 +589,44 @@ export default function AWA() {
     <div style={{ position: "fixed", inset: 0, background: "#08080d", fontFamily: "'SF Pro Display', -apple-system, sans-serif", display: "flex" }}>
       <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${BG})`, backgroundSize: "cover", backgroundPosition: "center", filter: "brightness(.12) saturate(.4)", zIndex: 0 }} />
       
-      {/* Left Panel */}
+      {/* Left Panel - Job List */}
       <div style={{ position: "relative", zIndex: 10, width: selectedJob ? "35%" : "100%", minWidth: 320, maxWidth: selectedJob ? 400 : "100%", borderRight: selectedJob ? "1px solid rgba(255,255,255,.05)" : "none", display: "flex", flexDirection: "column", background: "rgba(10,8,20,.7)", backdropFilter: "blur(16px)" }}>
+        
         <header style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.05)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <ABAPresence state={orbState} size={36} />
-            <div><h1 style={{ color: "white", fontSize: 16, fontWeight: 700, margin: 0 }}>AWA</h1><p style={{ color: "rgba(255,255,255,.4)", fontSize: 10, margin: 0 }}>{jobs.length} jobs</p></div>
+            <div>
+              <h1 style={{ color: "white", fontSize: 16, fontWeight: 700, margin: 0 }}>AWA</h1>
+              <p style={{ color: "rgba(255,255,255,.4)", fontSize: 10, margin: 0 }}>{jobs.length} jobs loaded</p>
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={loadJobs} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}><RefreshCw size={14} style={{ color: "rgba(255,255,255,.5)" }} /></button>
-            <button onClick={() => signOutUser()} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}><LogOut size={14} style={{ color: "rgba(255,255,255,.5)" }} /></button>
+            <button onClick={loadJobs} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}>
+              <RefreshCw size={14} style={{ color: "rgba(255,255,255,.5)" }} />
+            </button>
+            <button onClick={() => signOutUser()} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}>
+              <LogOut size={14} style={{ color: "rgba(255,255,255,.5)" }} />
+            </button>
           </div>
         </header>
         
         <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,.05)" }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
-            <button onClick={() => setAssigneeFilter("all")} style={{ padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0, background: assigneeFilter === "all" ? "rgba(139,92,246,.2)" : "rgba(255,255,255,.05)", color: assigneeFilter === "all" ? "#8B5CF6" : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600 }}>All {assigneeCounts.all}</button>
+            <button onClick={() => setAssigneeFilter("all")} style={{
+              padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0,
+              background: assigneeFilter === "all" ? "rgba(139,92,246,.2)" : "rgba(255,255,255,.05)",
+              color: assigneeFilter === "all" ? "#8B5CF6" : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600
+            }}>All {assigneeCounts.all || 0}</button>
             {Object.keys(TEAM).map(id => {
               const count = assigneeCounts[id] || 0;
               if (count === 0) return null;
-              return <button key={id} onClick={() => setAssigneeFilter(id)} style={{ padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0, background: assigneeFilter === id ? `${TEAM[id].color}33` : "rgba(255,255,255,.05)", color: assigneeFilter === id ? TEAM[id].color : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600 }}>{TEAM[id].initials} {count}</button>;
+              return (
+                <button key={id} onClick={() => setAssigneeFilter(id)} style={{
+                  padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0,
+                  background: assigneeFilter === id ? `${TEAM[id].color}33` : "rgba(255,255,255,.05)",
+                  color: assigneeFilter === id ? TEAM[id].color : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600
+                }}>{TEAM[id].initials} {count}</button>
+              );
             })}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(255,255,255,.04)", borderRadius: 10, border: "1px solid rgba(255,255,255,.05)" }}>
@@ -596,22 +636,43 @@ export default function AWA() {
         </div>
         
         <div style={{ flex: 1, overflow: "auto", padding: "12px 16px" }}>
-          {loading ? <div style={{ textAlign: "center", padding: 40 }}><ABAPresence state="thinking" size={60} /></div>
-          : filtered.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,.4)", fontSize: 13 }}>No jobs match filters</div>
-          : filtered.map(job => <JobCard key={job.id} job={job} selected={selectedJob?.id === job.id} onSelect={setSelectedJob} />)}
+          {loading ? (
+            <div style={{ textAlign: "center", padding: 40 }}><ABAPresence state="thinking" size={60} /></div>
+          ) : filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,.4)", fontSize: 13 }}>No jobs match filters</div>
+          ) : (
+            filtered.map(job => (
+              <JobCard key={job.id} job={job} selected={selectedJob?.id === job.id} onSelect={setSelectedJob} />
+            ))
+          )}
         </div>
       </div>
       
-      {/* Right Panel */}
       {selectedJob && (
         <div style={{ position: "relative", zIndex: 10, flex: 1, display: "flex", flexDirection: "column", background: "rgba(12,10,20,.9)", backdropFilter: "blur(16px)" }}>
-          <button onClick={() => setSelectedJob(null)} style={{ position: "absolute", top: 16, right: 16, zIndex: 20, background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}><X size={18} style={{ color: "rgba(255,255,255,.5)" }} /></button>
-          <JobWorkspace job={selectedJob} userId={userId} onUpdate={handleUpdate} orbState={orbState} setOrbState={setOrbState} setToast={setToast} />
+          <button onClick={() => setSelectedJob(null)} style={{
+            position: "absolute", top: 16, right: 16, zIndex: 20,
+            background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer"
+          }}>
+            <X size={18} style={{ color: "rgba(255,255,255,.5)" }} />
+          </button>
+          <JobWorkspace 
+            job={selectedJob} 
+            userId={userId} 
+            onUpdate={handleUpdate}
+            orbState={orbState}
+            setOrbState={setOrbState}
+            setToast={setToast}
+          />
         </div>
       )}
       
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } .spin { animation: spin 1s linear infinite; }`}</style>
+      
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spin { animation: spin 1s linear infinite; }
+      `}</style>
     </div>
   );
 }
