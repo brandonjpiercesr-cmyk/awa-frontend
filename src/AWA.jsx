@@ -3,115 +3,79 @@
 // ════════════════════════════════════════════════════════════════════════════
 // ARCHITECTURE:
 //   - This file is SKIN. It has NO brain. ZERO hardcoded logic.
-//   - Jobs CRUD: aba-reach.onrender.com/api/awa/*
-//   - Cover Letters: aba-reach.onrender.com/api/awa/cover-letters (JOBA agent)
-//   - AI Chat: abacia-services.onrender.com/api/air/process (FCW 87 agents)
+//   - Jobs/CRUD → aba-reach.onrender.com/api/awa/* (JOBA agent)
+//   - AI Chat → abacia-services.onrender.com/api/air/process (FCW, 87 agents)
 // ════════════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
-  Briefcase, FileText, Send, Search, ChevronRight, ChevronDown, ChevronUp,
+  Briefcase, FileText, Send, Search, ChevronRight, ChevronDown,
   User, Users, X, Check, Clock, Star, ExternalLink, RefreshCw,
   Copy, LogOut, MapPin, Building, Calendar, CheckCircle, AlertCircle,
-  Sparkles, Target, Award, Bookmark, ThumbsDown, Eye, EyeOff, Edit3,
-  FileEdit, UserCheck, MessageSquare, Mic, Save, Download, Plus
+  Sparkles, Target, Award, Bookmark, ThumbsDown, Edit3, Save, Download
 } from "lucide-react";
 import { auth, signInGoogle, signOutUser } from "./firebase.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { ABAPresence } from "./ABAPresence.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ENDPOINTS
+// ENDPOINTS - AWA uses REACH for jobs/JOBA, ABABASE for FCW/AI
 // ═══════════════════════════════════════════════════════════════════════════
-const REACH = "https://aba-reach.onrender.com";  // Jobs, Cover Letters, Resumes
-const ABABASE = "https://abacia-services.onrender.com";  // FCW, AI Chat
+const REACH = "https://aba-reach.onrender.com";
+const ABABASE = "https://abacia-services.onrender.com";
 
-// ═══════════════════════════════════════════════════════════════════════════
-// API FUNCTIONS - Route to correct endpoint
-// ═══════════════════════════════════════════════════════════════════════════
-async function fetchJobs(assignee = null) {
-  try {
-    let url = `${REACH}/api/awa/jobs`;
-    if (assignee) url += `?assignee=${assignee}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return data.jobs || [];
-  } catch (e) {
-    console.error("fetchJobs error:", e);
-    return [];
-  }
+// Jobs - REACH (JOBA agent)
+async function loadJobs(assignee) {
+  const url = assignee ? `${REACH}/api/awa/jobs?assignee=${assignee}` : `${REACH}/api/awa/jobs`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.jobs || [];
 }
 
 async function updateJob(jobId, updates) {
-  try {
-    const res = await fetch(`${REACH}/api/awa/jobs/${jobId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates)
-    });
-    return res.ok;
-  } catch (e) {
-    console.error("updateJob error:", e);
-    return false;
-  }
+  const res = await fetch(`${REACH}/api/awa/jobs/${jobId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates)
+  });
+  return res.ok;
 }
 
-async function generateCoverLetter(userId, jobTitle, organization) {
-  try {
-    const res = await fetch(`${REACH}/api/awa/cover-letters`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        user_id: userId, 
-        job_title: jobTitle, 
-        company_name: organization 
-      })
-    });
-    return await res.json();
-  } catch (e) {
-    console.error("generateCoverLetter error:", e);
-    return null;
-  }
+// Cover Letters - REACH (JOBA agent with team profiles)
+async function generateCoverLetter(userId, jobTitle, company) {
+  const res = await fetch(`${REACH}/api/awa/cover-letters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, job_title: jobTitle, company_name: company })
+  });
+  const data = await res.json();
+  return data.content || data.cover_letter?.content || null;
 }
 
-async function generateResume(userId, jobTitle, organization) {
-  try {
-    const res = await fetch(`${REACH}/api/awa/resumes/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        user_id: userId, 
-        target_role: jobTitle,
-        company_name: organization 
-      })
-    });
-    return await res.json();
-  } catch (e) {
-    console.error("generateResume error:", e);
-    return null;
-  }
+// Resume - REACH (JOBA agent)
+async function generateResume(userId, targetRole) {
+  const res = await fetch(`${REACH}/api/awa/resumes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, target_role: targetRole })
+  });
+  const data = await res.json();
+  return data.content || data.resume?.content || null;
 }
 
-async function chatWithABA(userId, message, jobContext = null) {
-  try {
-    const contextStr = jobContext 
-      ? `[AWA Context: ${jobContext.job_title} at ${jobContext.organization}] ` 
-      : "";
-    const res = await fetch(`${ABABASE}/api/air/process`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: contextStr + message,
-        userId,
-        channel: "awa"
-      })
-    });
-    const data = await res.json();
-    return data.response || data.message || "No response";
-  } catch (e) {
-    console.error("chatWithABA error:", e);
-    return "Error connecting to ABA";
-  }
+// AI Chat - ABABASE (FCW with 87 agents)
+async function airChat(userId, message, jobContext) {
+  const res = await fetch(`${ABABASE}/api/air/process`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: `[AWA Context: Job "${jobContext.job_title}" at ${jobContext.organization}] ${message}`,
+      userId,
+      channel: "awa"
+    })
+  });
+  const data = await res.json();
+  return data.response || null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -132,75 +96,32 @@ const TEAM = {
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
-
 function Toast({ message, type = "info", onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
   const colors = { error: "#EF4444", success: "#22C55E", warning: "#F59E0B", info: "#8B5CF6" };
-  return (
-    <div style={{
-      position: "fixed", bottom: 100, left: "50%", transform: "translateX(-50%)",
-      padding: "12px 20px", borderRadius: 12, background: colors[type], color: "white",
-      fontSize: 13, fontWeight: 600, zIndex: 200, boxShadow: "0 4px 20px rgba(0,0,0,.4)"
-    }}>{message}</div>
-  );
+  return <div style={{ position: "fixed", bottom: 100, left: "50%", transform: "translateX(-50%)", padding: "12px 20px", borderRadius: 12, background: colors[type], color: "white", fontSize: 13, fontWeight: 600, zIndex: 200, boxShadow: "0 4px 20px rgba(0,0,0,.4)" }}>{message}</div>;
 }
 
 function TeamBadge({ id, size = "sm" }) {
   const t = TEAM[id];
   if (!t) return null;
   const s = size === "sm" ? 24 : 32;
-  return (
-    <div style={{
-      width: s, height: s, borderRadius: 8,
-      background: `linear-gradient(135deg, ${t.color}, ${t.color}99)`,
-      display: "flex", alignItems: "center", justifyContent: "center",
-      fontSize: size === "sm" ? 8 : 10, fontWeight: 700, color: "white"
-    }}>{t.initials}</div>
-  );
-}
-
-function AssigneeBadges({ assignees }) {
-  if (!assignees || assignees.length === 0) return null;
-  return (
-    <div style={{ display: "flex", gap: 4 }}>
-      {assignees.map(a => <TeamBadge key={a} id={a} size="sm" />)}
-    </div>
-  );
+  return <div style={{ width: s, height: s, borderRadius: 8, background: `linear-gradient(135deg, ${t.color}, ${t.color}99)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size === "sm" ? 8 : 10, fontWeight: 700, color: "white" }}>{t.initials}</div>;
 }
 
 function JobCard({ job, onSelect, selected }) {
   return (
-    <div onClick={() => onSelect(job)} style={{
-      background: selected ? "rgba(139,92,246,.15)" : "rgba(255,255,255,.03)",
-      border: `1px solid ${selected ? "rgba(139,92,246,.3)" : "rgba(255,255,255,.05)"}`,
-      borderRadius: 14, padding: "14px 16px", marginBottom: 8, cursor: "pointer", transition: "all .15s"
-    }}>
+    <div onClick={() => onSelect(job)} style={{ background: selected ? "rgba(139,92,246,.15)" : "rgba(255,255,255,.03)", border: `1px solid ${selected ? "rgba(139,92,246,.3)" : "rgba(255,255,255,.05)"}`, borderRadius: 14, padding: "14px 16px", marginBottom: 8, cursor: "pointer", transition: "all .15s" }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{
-            color: "rgba(255,255,255,.9)", fontSize: 14, fontWeight: 600, margin: 0, lineHeight: 1.3,
-            overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical"
-          }}>{job.job_title}</h3>
-          
+          <h3 style={{ color: "rgba(255,255,255,.9)", fontSize: 14, fontWeight: 600, margin: 0, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{job.job_title}</h3>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-            <span style={{ color: "rgba(255,255,255,.5)", fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}>
-              <Building size={10} />{job.organization}
-            </span>
-            {job.salary && (
-              <span style={{ color: "rgba(139,92,246,.7)", fontSize: 10, fontWeight: 600 }}>
-                {job.salary}
-              </span>
-            )}
+            <span style={{ color: "rgba(255,255,255,.5)", fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}><Building size={10} />{job.organization}</span>
+            {job.salary && <span style={{ color: "rgba(139,92,246,.7)", fontSize: 10, fontWeight: 600 }}>{job.salary}</span>}
           </div>
-          
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-            <AssigneeBadges assignees={job.assignees} />
-            <span style={{
-              padding: "3px 8px", borderRadius: 6, fontSize: 9, fontWeight: 600,
-              background: job.status === "LIVE" ? "rgba(34,197,94,.2)" : "rgba(107,114,128,.2)",
-              color: job.status === "LIVE" ? "#22C55E" : "#6B7280"
-            }}>{job.status}</span>
-            {job.cover_letter && <FileText size={12} style={{ color: "rgba(139,92,246,.5)" }} />}
+            {job.assignees?.map(a => <TeamBadge key={a} id={a} size="sm" />)}
+            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 9, fontWeight: 600, background: job.status === "LIVE" ? "rgba(34,197,94,.2)" : "rgba(107,114,128,.2)", color: job.status === "LIVE" ? "#22C55E" : "#6B7280" }}>{job.status}</span>
           </div>
         </div>
         <ChevronRight size={16} style={{ color: "rgba(255,255,255,.2)", flexShrink: 0 }} />
@@ -209,269 +130,110 @@ function JobCard({ job, onSelect, selected }) {
   );
 }
 
-function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }) {
-  const [activeTab, setActiveTab] = useState("cover");
+function LiveEditor({ content, onChange, onSave, saving, title, onGenerate, generating }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <h3 style={{ color: "white", fontSize: 14, fontWeight: 600, margin: 0 }}>{title}</h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!content && onGenerate && (
+            <button onClick={onGenerate} disabled={generating} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "linear-gradient(135deg, rgba(139,92,246,.3), rgba(99,102,241,.2))", border: "none", cursor: "pointer", color: "#8B5CF6", fontSize: 12, fontWeight: 600 }}>
+              {generating ? <RefreshCw size={14} className="spin" /> : <Sparkles size={14} />}{generating ? "Generating..." : "Generate"}
+            </button>
+          )}
+          {content && (
+            <>
+              <button onClick={() => navigator.clipboard.writeText(content)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 12, fontWeight: 600 }}><Copy size={14} />Copy</button>
+              <button onClick={onSave} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "rgba(139,92,246,.2)", border: "none", cursor: "pointer", color: "#8B5CF6", fontSize: 12, fontWeight: 600 }}>{saving ? <RefreshCw size={14} className="spin" /> : <Save size={14} />}{saving ? "Saving..." : "Save"}</button>
+            </>
+          )}
+        </div>
+      </div>
+      {content ? (
+        <textarea value={content} onChange={e => onChange(e.target.value)} style={{ flex: 1, width: "100%", padding: 16, borderRadius: 12, background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", color: "rgba(255,255,255,.85)", fontSize: 13, lineHeight: 1.7, resize: "none", outline: "none", fontFamily: "inherit" }} />
+      ) : (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,.3)", fontSize: 13 }}>Click "Generate" to create {title.toLowerCase()}</div>
+      )}
+    </div>
+  );
+}
+
+function JobWorkspace({ job, userId, onUpdate, setOrbState }) {
+  const [tab, setTab] = useState("cover");
   const [coverLetter, setCoverLetter] = useState(job.cover_letter || "");
   const [resume, setResume] = useState(job.resume_version || "");
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [generating, setGenerating] = useState(null);
   const [saving, setSaving] = useState(false);
-  
+
   const handleGenerate = async (type) => {
     setGenerating(type);
     setOrbState("thinking");
-    
     if (type === "cover") {
-      const assigneeId = job.assignees?.[0] || userId;
-      const result = await generateCoverLetter(assigneeId, job.job_title, job.organization);
-      if (result?.content || result?.cover_letter?.content) {
-        const content = result.content || result.cover_letter?.content;
-        setCoverLetter(content);
-        setToast({ message: "Cover letter generated!", type: "success" });
-      } else {
-        setToast({ message: "Generation failed", type: "error" });
-      }
+      const content = await generateCoverLetter(userId, job.job_title, job.organization);
+      if (content) setCoverLetter(content);
     } else if (type === "resume") {
-      const assigneeId = job.assignees?.[0] || userId;
-      const result = await generateResume(assigneeId, job.job_title, job.organization);
-      if (result?.content || result?.resume?.content) {
-        const content = result.content || result.resume?.content;
-        setResume(content);
-        setToast({ message: "Resume generated!", type: "success" });
-      } else {
-        setToast({ message: "Generation failed", type: "error" });
-      }
+      const content = await generateResume(userId, job.job_title);
+      if (content) setResume(content);
     }
-    
     setGenerating(null);
     setOrbState("idle");
   };
-  
-  const handleSave = async (type, content) => {
+
+  const handleSave = async (type) => {
     setSaving(true);
     setOrbState("thinking");
-    
-    const updates = {};
-    if (type === "cover") updates.cover_letter = content;
-    if (type === "resume") updates.resume_version = content;
-    
-    const success = await onUpdate(job.id, updates);
+    const updates = type === "cover" ? { cover_letter: coverLetter } : { resume_version: resume };
+    await onUpdate(job.id, updates);
     setSaving(false);
     setOrbState("idle");
-    
-    if (success) {
-      setToast({ message: "Saved!", type: "success" });
-    }
   };
-  
+
   const handleChat = async () => {
     if (!chatInput.trim()) return;
-    
-    const userMsg = { role: "user", content: chatInput };
-    setChatMessages(prev => [...prev, userMsg]);
-    const question = chatInput;
+    setChatMessages(prev => [...prev, { role: "user", content: chatInput }]);
+    const msg = chatInput;
     setChatInput("");
     setOrbState("thinking");
-    
-    const response = await chatWithABA(userId, question, job);
-    setChatMessages(prev => [...prev, { role: "assistant", content: response }]);
+    const response = await airChat(userId, msg, job);
+    if (response) setChatMessages(prev => [...prev, { role: "assistant", content: response }]);
     setOrbState("idle");
   };
-  
-  const TABS = [
-    { id: "cover", label: "Cover Letter", icon: FileText },
-    { id: "resume", label: "Resume", icon: FileEdit },
-    { id: "chat", label: "Ask ABA", icon: MessageSquare }
-  ];
-  
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Job Header */}
       <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,.05)" }}>
-        <h2 style={{ color: "white", fontSize: 18, fontWeight: 700, margin: "0 0 4px", lineHeight: 1.3 }}>
-          {job.job_title}
-        </h2>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h2 style={{ color: "white", fontSize: 18, fontWeight: 700, margin: "0 0 4px", lineHeight: 1.3 }}>{job.job_title}</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ color: "rgba(255,255,255,.6)", fontSize: 13 }}>{job.organization}</span>
           <span style={{ color: "rgba(139,92,246,.7)", fontSize: 12, fontWeight: 600 }}>{job.salary}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-          <AssigneeBadges assignees={job.assignees} />
-          <a href={job.url} target="_blank" rel="noopener noreferrer" style={{
-            display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
-            background: "rgba(139,92,246,.15)", color: "#8B5CF6", fontSize: 11, fontWeight: 600, textDecoration: "none"
-          }}>
-            <ExternalLink size={12} />View Posting
-          </a>
+          {job.assignees?.map(a => <TeamBadge key={a} id={a} />)}
+          <a href={job.url} target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6, background: "rgba(139,92,246,.15)", color: "#8B5CF6", fontSize: 11, fontWeight: 600, textDecoration: "none" }}><ExternalLink size={12} />View Posting</a>
         </div>
       </div>
-      
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,.05)", overflowX: "auto" }}>
-        {TABS.map(tab => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
-              display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8,
-              background: active ? "rgba(139,92,246,.2)" : "rgba(255,255,255,.03)",
-              border: "none", cursor: "pointer",
-              color: active ? "#8B5CF6" : "rgba(255,255,255,.5)",
-              fontSize: 12, fontWeight: 600, flexShrink: 0
-            }}>
-              <Icon size={14} />{tab.label}
-            </button>
-          );
-        })}
+      <div style={{ display: "flex", gap: 4, padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,.05)" }}>
+        {["cover", "resume", "chat"].map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{ padding: "8px 14px", borderRadius: 8, background: tab === t ? "rgba(139,92,246,.2)" : "rgba(255,255,255,.03)", border: "none", cursor: "pointer", color: tab === t ? "#8B5CF6" : "rgba(255,255,255,.5)", fontSize: 12, fontWeight: 600, textTransform: "capitalize" }}>{t === "cover" ? "Cover Letter" : t === "resume" ? "Resume" : "Chat with ABA"}</button>
+        ))}
       </div>
-      
-      {/* Content */}
       <div style={{ flex: 1, overflow: "auto", padding: 20 }}>
-        {activeTab === "cover" && (
-          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-            {!coverLetter ? (
-              <div style={{ textAlign: "center", padding: 40 }}>
-                <FileText size={48} style={{ color: "rgba(139,92,246,.3)", marginBottom: 16 }} />
-                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>
-                  Generate a cover letter using JOBA agent and {job.assignees?.[0] || "your"} profile.
-                </p>
-                <button onClick={() => handleGenerate("cover")} disabled={generating === "cover"} style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10,
-                  background: "linear-gradient(135deg, rgba(139,92,246,.4), rgba(99,102,241,.3))",
-                  border: "none", cursor: "pointer", color: "white", fontSize: 14, fontWeight: 600, margin: "0 auto"
-                }}>
-                  {generating === "cover" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Cover Letter</>}
-                </button>
-              </div>
-            ) : (
-              <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <h3 style={{ color: "white", fontSize: 14, fontWeight: 600, margin: 0 }}>Cover Letter</h3>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => navigator.clipboard.writeText(coverLetter)} style={{
-                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
-                      background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 11
-                    }}><Copy size={12} />Copy</button>
-                    <button onClick={() => handleSave("cover", coverLetter)} disabled={saving} style={{
-                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
-                      background: "rgba(139,92,246,.2)", border: "none", cursor: "pointer", color: "#8B5CF6", fontSize: 11, fontWeight: 600
-                    }}>{saving ? "Saving..." : "Save"}</button>
-                  </div>
-                </div>
-                <textarea
-                  value={coverLetter}
-                  onChange={e => setCoverLetter(e.target.value)}
-                  style={{
-                    flex: 1, width: "100%", padding: 16, borderRadius: 12,
-                    background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)",
-                    color: "rgba(255,255,255,.85)", fontSize: 13, lineHeight: 1.7,
-                    resize: "none", outline: "none", fontFamily: "inherit"
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        )}
-        
-        {activeTab === "resume" && (
-          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-            {!resume ? (
-              <div style={{ textAlign: "center", padding: 40 }}>
-                <FileEdit size={48} style={{ color: "rgba(99,102,241,.3)", marginBottom: 16 }} />
-                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 16 }}>
-                  Generate a tailored resume for this role.
-                </p>
-                <button onClick={() => handleGenerate("resume")} disabled={generating === "resume"} style={{
-                  display: "flex", alignItems: "center", gap: 8, padding: "12px 20px", borderRadius: 10,
-                  background: "linear-gradient(135deg, rgba(99,102,241,.4), rgba(139,92,246,.3))",
-                  border: "none", cursor: "pointer", color: "white", fontSize: 14, fontWeight: 600, margin: "0 auto"
-                }}>
-                  {generating === "resume" ? <><RefreshCw size={16} className="spin" />Generating...</> : <><Sparkles size={16} />Generate Resume</>}
-                </button>
-              </div>
-            ) : (
-              <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <h3 style={{ color: "white", fontSize: 14, fontWeight: 600, margin: 0 }}>Tailored Resume</h3>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => navigator.clipboard.writeText(resume)} style={{
-                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
-                      background: "rgba(255,255,255,.05)", border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 11
-                    }}><Copy size={12} />Copy</button>
-                    <button onClick={() => handleSave("resume", resume)} disabled={saving} style={{
-                      display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6,
-                      background: "rgba(139,92,246,.2)", border: "none", cursor: "pointer", color: "#8B5CF6", fontSize: 11, fontWeight: 600
-                    }}>{saving ? "Saving..." : "Save"}</button>
-                  </div>
-                </div>
-                <textarea
-                  value={resume}
-                  onChange={e => setResume(e.target.value)}
-                  style={{
-                    flex: 1, width: "100%", padding: 16, borderRadius: 12,
-                    background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)",
-                    color: "rgba(255,255,255,.85)", fontSize: 13, lineHeight: 1.7,
-                    resize: "none", outline: "none", fontFamily: "inherit"
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        )}
-        
-        {activeTab === "chat" && (
+        {tab === "cover" && <LiveEditor content={coverLetter} onChange={setCoverLetter} onSave={() => handleSave("cover")} saving={saving} title="Cover Letter" onGenerate={() => handleGenerate("cover")} generating={generating === "cover"} />}
+        {tab === "resume" && <LiveEditor content={resume} onChange={setResume} onSave={() => handleSave("resume")} saving={saving} title="Resume" onGenerate={() => handleGenerate("resume")} generating={generating === "resume"} />}
+        {tab === "chat" && (
           <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
             <div style={{ flex: 1, overflow: "auto", marginBottom: 12 }}>
               {chatMessages.length === 0 ? (
-                <div style={{ textAlign: "center", padding: 40 }}>
-                  <ABAPresence state="idle" size={60} />
-                  <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginTop: 16 }}>
-                    Ask ABA anything about this job, organization, or how to prepare.
-                  </p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 16 }}>
-                    {["What should I emphasize?", "Tell me about this org", "Salary negotiation tips"].map(q => (
-                      <button key={q} onClick={() => { setChatInput(q); }} style={{
-                        padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,.05)",
-                        border: "none", cursor: "pointer", color: "rgba(255,255,255,.6)", fontSize: 11
-                      }}>{q}</button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                chatMessages.map((msg, i) => (
-                  <div key={i} style={{
-                    padding: "12px 16px", marginBottom: 8, borderRadius: 12,
-                    background: msg.role === "user" ? "rgba(139,92,246,.15)" : "rgba(255,255,255,.03)",
-                    marginLeft: msg.role === "user" ? "20%" : 0,
-                    marginRight: msg.role === "assistant" ? "20%" : 0
-                  }}>
-                    <p style={{ color: "rgba(255,255,255,.8)", fontSize: 13, margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                      {msg.content}
-                    </p>
-                  </div>
-                ))
-              )}
+                <div style={{ textAlign: "center", padding: 40 }}><ABAPresence state="idle" size={60} /><p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginTop: 16 }}>Ask ABA about this job, interview prep, or anything else.</p></div>
+              ) : chatMessages.map((m, i) => (
+                <div key={i} style={{ padding: "12px 16px", marginBottom: 8, borderRadius: 12, background: m.role === "user" ? "rgba(139,92,246,.15)" : "rgba(255,255,255,.03)", marginLeft: m.role === "user" ? "20%" : 0, marginRight: m.role === "assistant" ? "20%" : 0 }}><p style={{ color: "rgba(255,255,255,.8)", fontSize: 13, margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.content}</p></div>
+              ))}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleChat()}
-                placeholder="Ask about this job..."
-                style={{
-                  flex: 1, padding: "12px 16px", borderRadius: 12,
-                  background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)",
-                  color: "white", fontSize: 14, outline: "none"
-                }}
-              />
-              <button onClick={handleChat} style={{
-                padding: "12px 16px", borderRadius: 12,
-                background: "linear-gradient(135deg, rgba(139,92,246,.4), rgba(99,102,241,.3))",
-                border: "none", cursor: "pointer"
-              }}>
-                <Send size={18} style={{ color: "white" }} />
-              </button>
+              <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleChat()} placeholder="Ask about this job..." style={{ flex: 1, padding: "12px 16px", borderRadius: 12, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)", color: "white", fontSize: 14, outline: "none" }} />
+              <button onClick={handleChat} style={{ padding: "12px 16px", borderRadius: 12, background: "linear-gradient(135deg, rgba(139,92,246,.4), rgba(99,102,241,.3))", border: "none", cursor: "pointer" }}><Send size={18} style={{ color: "white" }} /></button>
             </div>
           </div>
         )}
@@ -483,15 +245,12 @@ function JobWorkspace({ job, userId, onUpdate, orbState, setOrbState, setToast }
 function Login({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
   const go = async () => {
     setLoading(true);
-    setError(null);
     try { const r = await signInGoogle(); onLogin(r.user); }
-    catch (e) { setError(e.message || "Sign in failed"); }
+    catch (e) { setError(e.message); }
     setLoading(false);
   };
-  
   return (
     <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#08080d", fontFamily: "'SF Pro Display', -apple-system, sans-serif" }}>
       <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${BG})`, backgroundSize: "cover", backgroundPosition: "center", filter: "brightness(.3) saturate(.6)", animation: "kenBurns 30s ease-in-out infinite" }} />
@@ -539,13 +298,12 @@ export default function AWA() {
   }, [user]);
 
   useEffect(() => { const unsub = onAuthStateChanged(auth, u => { setUser(u); setAuthLoading(false); }); return () => unsub(); }, []);
-  
-  useEffect(() => { if (user) loadJobs(); }, [user]);
+  useEffect(() => { if (user) fetchJobs(); }, [user]);
 
-  const loadJobs = async () => {
+  const fetchJobs = async () => {
     setLoading(true);
     setOrbState("thinking");
-    const data = await fetchJobs();
+    const data = await loadJobs();
     setJobs(data);
     setLoading(false);
     setOrbState("idle");
@@ -557,29 +315,23 @@ export default function AWA() {
     if (success) {
       setJobs(prev => prev.map(j => j.id === jobId ? { ...j, ...updates } : j));
       setSelectedJob(prev => prev?.id === jobId ? { ...prev, ...updates } : prev);
+      setToast({ message: "Saved", type: "success" });
+    } else {
+      setToast({ message: "Save failed", type: "error" });
     }
     setOrbState("idle");
-    return success;
   };
 
-  const filtered = useMemo(() => {
-    return jobs.filter(j => {
-      const matchSearch = !search || 
-        j.job_title?.toLowerCase().includes(search.toLowerCase()) || 
-        j.organization?.toLowerCase().includes(search.toLowerCase());
-      const matchAssignee = assigneeFilter === "all" || j.assignees?.includes(assigneeFilter);
-      return matchSearch && matchAssignee;
-    });
-  }, [jobs, search, assigneeFilter]);
+  const filtered = useMemo(() => jobs.filter(j => {
+    const matchSearch = !search || j.job_title?.toLowerCase().includes(search.toLowerCase()) || j.organization?.toLowerCase().includes(search.toLowerCase());
+    const matchAssignee = assigneeFilter === "all" || j.assignees?.includes(assigneeFilter);
+    return matchSearch && matchAssignee;
+  }), [jobs, search, assigneeFilter]);
 
-  const assigneeCounts = useMemo(() => {
-    const counts = { all: jobs.length };
-    jobs.forEach(j => {
-      j.assignees?.forEach(a => {
-        counts[a] = (counts[a] || 0) + 1;
-      });
-    });
-    return counts;
+  const counts = useMemo(() => {
+    const c = { all: jobs.length };
+    jobs.forEach(j => j.assignees?.forEach(a => { c[a] = (c[a] || 0) + 1; }));
+    return c;
   }, [jobs]);
 
   if (authLoading) return <div style={{ position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#08080d" }}><ABAPresence state="thinking" size={80} /></div>;
@@ -588,91 +340,33 @@ export default function AWA() {
   return (
     <div style={{ position: "fixed", inset: 0, background: "#08080d", fontFamily: "'SF Pro Display', -apple-system, sans-serif", display: "flex" }}>
       <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${BG})`, backgroundSize: "cover", backgroundPosition: "center", filter: "brightness(.12) saturate(.4)", zIndex: 0 }} />
-      
-      {/* Left Panel - Job List */}
       <div style={{ position: "relative", zIndex: 10, width: selectedJob ? "35%" : "100%", minWidth: 320, maxWidth: selectedJob ? 400 : "100%", borderRight: selectedJob ? "1px solid rgba(255,255,255,.05)" : "none", display: "flex", flexDirection: "column", background: "rgba(10,8,20,.7)", backdropFilter: "blur(16px)" }}>
-        
         <header style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.05)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <ABAPresence state={orbState} size={36} />
-            <div>
-              <h1 style={{ color: "white", fontSize: 16, fontWeight: 700, margin: 0 }}>AWA</h1>
-              <p style={{ color: "rgba(255,255,255,.4)", fontSize: 10, margin: 0 }}>{jobs.length} jobs loaded</p>
-            </div>
-          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}><ABAPresence state={orbState} size={36} /><div><h1 style={{ color: "white", fontSize: 16, fontWeight: 700, margin: 0 }}>AWA</h1><p style={{ color: "rgba(255,255,255,.4)", fontSize: 10, margin: 0 }}>{jobs.length} jobs</p></div></div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={loadJobs} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}>
-              <RefreshCw size={14} style={{ color: "rgba(255,255,255,.5)" }} />
-            </button>
-            <button onClick={() => signOutUser()} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}>
-              <LogOut size={14} style={{ color: "rgba(255,255,255,.5)" }} />
-            </button>
+            <button onClick={fetchJobs} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}><RefreshCw size={14} style={{ color: "rgba(255,255,255,.5)" }} /></button>
+            <button onClick={() => signOutUser()} style={{ background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}><LogOut size={14} style={{ color: "rgba(255,255,255,.5)" }} /></button>
           </div>
         </header>
-        
         <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,.05)" }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
-            <button onClick={() => setAssigneeFilter("all")} style={{
-              padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0,
-              background: assigneeFilter === "all" ? "rgba(139,92,246,.2)" : "rgba(255,255,255,.05)",
-              color: assigneeFilter === "all" ? "#8B5CF6" : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600
-            }}>All {assigneeCounts.all || 0}</button>
-            {Object.keys(TEAM).map(id => {
-              const count = assigneeCounts[id] || 0;
-              if (count === 0) return null;
-              return (
-                <button key={id} onClick={() => setAssigneeFilter(id)} style={{
-                  padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0,
-                  background: assigneeFilter === id ? `${TEAM[id].color}33` : "rgba(255,255,255,.05)",
-                  color: assigneeFilter === id ? TEAM[id].color : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600
-                }}>{TEAM[id].initials} {count}</button>
-              );
-            })}
+            <button onClick={() => setAssigneeFilter("all")} style={{ padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0, background: assigneeFilter === "all" ? "rgba(139,92,246,.2)" : "rgba(255,255,255,.05)", color: assigneeFilter === "all" ? "#8B5CF6" : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600 }}>All {counts.all}</button>
+            {Object.keys(TEAM).map(id => counts[id] ? <button key={id} onClick={() => setAssigneeFilter(id)} style={{ padding: "6px 12px", borderRadius: 16, border: "none", cursor: "pointer", flexShrink: 0, background: assigneeFilter === id ? `${TEAM[id].color}33` : "rgba(255,255,255,.05)", color: assigneeFilter === id ? TEAM[id].color : "rgba(255,255,255,.5)", fontSize: 11, fontWeight: 600 }}>{TEAM[id].initials} {counts[id]}</button> : null)}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(255,255,255,.04)", borderRadius: 10, border: "1px solid rgba(255,255,255,.05)" }}>
-            <Search size={14} style={{ color: "rgba(255,255,255,.3)" }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search jobs..." style={{ flex: 1, background: "none", border: "none", outline: "none", color: "white", fontSize: 13 }} />
-          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "rgba(255,255,255,.04)", borderRadius: 10, border: "1px solid rgba(255,255,255,.05)" }}><Search size={14} style={{ color: "rgba(255,255,255,.3)" }} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search jobs..." style={{ flex: 1, background: "none", border: "none", outline: "none", color: "white", fontSize: 13 }} /></div>
         </div>
-        
         <div style={{ flex: 1, overflow: "auto", padding: "12px 16px" }}>
-          {loading ? (
-            <div style={{ textAlign: "center", padding: 40 }}><ABAPresence state="thinking" size={60} /></div>
-          ) : filtered.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,.4)", fontSize: 13 }}>No jobs match filters</div>
-          ) : (
-            filtered.map(job => (
-              <JobCard key={job.id} job={job} selected={selectedJob?.id === job.id} onSelect={setSelectedJob} />
-            ))
-          )}
+          {loading ? <div style={{ textAlign: "center", padding: 40 }}><ABAPresence state="thinking" size={60} /></div> : filtered.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,.4)", fontSize: 13 }}>No jobs match</div> : filtered.map(job => <JobCard key={job.id} job={job} selected={selectedJob?.id === job.id} onSelect={setSelectedJob} />)}
         </div>
       </div>
-      
       {selectedJob && (
         <div style={{ position: "relative", zIndex: 10, flex: 1, display: "flex", flexDirection: "column", background: "rgba(12,10,20,.9)", backdropFilter: "blur(16px)" }}>
-          <button onClick={() => setSelectedJob(null)} style={{
-            position: "absolute", top: 16, right: 16, zIndex: 20,
-            background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer"
-          }}>
-            <X size={18} style={{ color: "rgba(255,255,255,.5)" }} />
-          </button>
-          <JobWorkspace 
-            job={selectedJob} 
-            userId={userId} 
-            onUpdate={handleUpdate}
-            orbState={orbState}
-            setOrbState={setOrbState}
-            setToast={setToast}
-          />
+          <button onClick={() => setSelectedJob(null)} style={{ position: "absolute", top: 16, right: 16, zIndex: 20, background: "rgba(255,255,255,.05)", border: "none", borderRadius: 8, padding: 8, cursor: "pointer" }}><X size={18} style={{ color: "rgba(255,255,255,.5)" }} /></button>
+          <JobWorkspace job={selectedJob} userId={userId} onUpdate={handleUpdate} setOrbState={setOrbState} />
         </div>
       )}
-      
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
-      
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .spin { animation: spin 1s linear infinite; }
-      `}</style>
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } .spin { animation: spin 1s linear infinite; }`}</style>
     </div>
   );
 }
